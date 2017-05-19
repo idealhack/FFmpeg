@@ -411,6 +411,11 @@ typedef struct RTSPState {
      */
     char *speed;
 
+    /**
+     * playback scale header
+     */
+    char *scale;
+
     char default_lang[4];
     int buffer_size;
 } RTSPState;

@@ -98,6 +98,7 @@ const AVOption ff_rtsp_options[] = {
     COMMON_OPTS(),
     { "user-agent", "override User-Agent header", OFFSET(user_agent), AV_OPT_TYPE_STRING, {.str = LIBAVFORMAT_IDENT}, 0, 0, DEC },
     { "speed", "set playback speed header", OFFSET(speed), AV_OPT_TYPE_STRING, {.str = LIBAVFORMAT_IDENT}, 0, 0, DEC },
+    { "scale", "set playback scale header", OFFSET(scale), AV_OPT_TYPE_STRING, {.str = LIBAVFORMAT_IDENT}, 0, 0, DEC },
     { NULL },
 };
 
@@ -1316,6 +1317,7 @@ static int rtsp_send_cmd_with_content_async(AVFormatContext *s,
     av_strlcatf(buf, sizeof(buf), "CSeq: %d\r\n", rt->seq);
     av_strlcatf(buf, sizeof(buf), "User-Agent: %s\r\n",  rt->user_agent);
     av_strlcatf(buf, sizeof(buf), "Speed: %s\r\n",  rt->speed);
+    av_strlcatf(buf, sizeof(buf), "Scale: %s\r\n",  rt->scale);
     if (rt->session_id[0] != '\0' && (!headers ||
         !strstr(headers, "\nIf-Match:"))) {
         av_strlcatf(buf, sizeof(buf), "Session: %s\r\n", rt->session_id);
