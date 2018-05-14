@@ -51,6 +51,50 @@ typedef struct StreamContext {
 } StreamContext;
 static StreamContext *stream_ctx;
 
+// 转码配置
+typedef struct TranscodingConfig {
+    char *video_encoder;
+    char *audio_encoder;
+    int width;
+    int height;
+    int fps;
+    int bit_rate;
+    char *sample_fmt;
+    int sample_rate;
+    char *channel_layout;
+    int gop_size;
+} TranscodingConfig;
+static TranscodingConfig g_config;
+// 输入视频时间
+static int64_t g_duration;
+// 当前转码时间
+static int64_t g_position;
+// 视频时间戳偏移量
+static int64_t g_video_offset;
+// 音频时间戳偏移量
+static int64_t g_audio_offset;
+// 是否已取消
+static int g_was_canceled;
+
+// 解析转码配置
+static int parse_config(char **config)
+{
+    // 测试
+    // TODO: 字符串数组转化为结构体，或者改用其它参数类型
+    g_config.video_encoder = "libx264"; // h264
+    g_config.audio_encoder = "aac";
+    g_config.width = 480;
+    g_config.height = 720;
+    g_config.fps = 60;
+    g_config.bit_rate = 0; // auto
+    g_config.sample_fmt = "s16"; // pcm 16
+    g_config.sample_rate = 44100;
+    g_config.channel_layout = "stereo";
+    g_config.gop_size = 0;  // intra_only
+
+    return 0;
+}
+
 static int open_input_file(const char *filename)
 {
     int ret;
@@ -70,6 +114,8 @@ static int open_input_file(const char *filename)
     stream_ctx = av_mallocz_array(ifmt_ctx->nb_streams, sizeof(*stream_ctx));
     if (!stream_ctx)
         return AVERROR(ENOMEM);
+
+    g_duration = ifmt_ctx->duration;
 
     for (i = 0; i < ifmt_ctx->nb_streams; i++) {
         AVStream *stream = ifmt_ctx->streams[i];
@@ -140,6 +186,10 @@ static int open_output_file(const char *filename)
                 || dec_ctx->codec_type == AVMEDIA_TYPE_AUDIO) {
             /* in this example, we choose transcoding to same codec */
             encoder = avcodec_find_encoder(dec_ctx->codec_id);
+            if (dec_ctx->codec_type == AVMEDIA_TYPE_VIDEO)
+                encoder = avcodec_find_encoder_by_name(g_config.video_encoder);
+            else if (dec_ctx->codec_type == AVMEDIA_TYPE_AUDIO)
+                encoder = avcodec_find_encoder_by_name(g_config.audio_encoder);
             if (!encoder) {
                 av_log(NULL, AV_LOG_FATAL, "Necessary encoder not found\n");
                 return AVERROR_INVALIDDATA;
@@ -154,9 +204,9 @@ static int open_output_file(const char *filename)
              * sample rate etc.). These properties can be changed for output
              * streams easily using filters */
             if (dec_ctx->codec_type == AVMEDIA_TYPE_VIDEO) {
-                enc_ctx->height = dec_ctx->height;
-                enc_ctx->width = dec_ctx->width;
-                enc_ctx->sample_aspect_ratio = dec_ctx->sample_aspect_ratio;
+                enc_ctx->height = g_config.height;
+                enc_ctx->width = g_config.width;
+                enc_ctx->sample_aspect_ratio = av_make_q(g_config.width, g_config.height);
                 /* take first format from list of supported formats */
                 if (encoder->pix_fmts)
                     enc_ctx->pix_fmt = encoder->pix_fmts[0];
@@ -164,9 +214,15 @@ static int open_output_file(const char *filename)
                     enc_ctx->pix_fmt = dec_ctx->pix_fmt;
                 /* video time_base can be set to whatever is handy and supported by encoder */
                 enc_ctx->time_base = dec_ctx->time_base;
+                enc_ctx->bit_rate = g_config.bit_rate;
+                enc_ctx->gop_size = g_config.gop_size;
             } else {
-                enc_ctx->sample_rate = dec_ctx->sample_rate;
+                enc_ctx->sample_rate = g_config.sample_rate;
                 enc_ctx->channel_layout = dec_ctx->channel_layout;
+                if (strcmp(g_config.channel_layout, "mono") == 0)
+                    enc_ctx->channel_layout = AV_CH_LAYOUT_MONO;
+                else if (strcmp(g_config.channel_layout, "stereo") == 0)
+                    enc_ctx->channel_layout = AV_CH_LAYOUT_STEREO;
                 enc_ctx->channels = av_get_channel_layout_nb_channels(enc_ctx->channel_layout);
                 /* take first format from list of supported formats */
                 enc_ctx->sample_fmt = encoder->sample_fmts[0];
@@ -374,7 +430,7 @@ end:
 
 static int init_filters(void)
 {
-    const char *filter_spec;
+    char filter_spec[512];
     unsigned int i;
     int ret;
     filter_ctx = av_malloc_array(ifmt_ctx->nb_streams, sizeof(*filter_ctx));
@@ -391,9 +447,11 @@ static int init_filters(void)
 
 
         if (ifmt_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
-            filter_spec = "null"; /* passthrough (dummy) filter for video */
+            snprintf(filter_spec, sizeof(filter_spec), "fps=%d,scale=w=%d:h=%d",
+            g_config.fps, g_config.width, g_config.height);
         else
-            filter_spec = "anull"; /* passthrough (dummy) filter for audio */
+            snprintf(filter_spec, sizeof(filter_spec), "aformat=sample_fmts=%s:sample_rates=%d:channel_layouts=%s",
+            g_config.sample_fmt, g_config.sample_rate, g_config.channel_layout);
         ret = init_filter(&filter_ctx[i], stream_ctx[i].dec_ctx,
                 stream_ctx[i].enc_ctx, filter_spec);
         if (ret)
@@ -433,8 +491,14 @@ static int encode_write_frame(AVFrame *filt_frame, unsigned int stream_index, in
                          ofmt_ctx->streams[stream_index]->time_base);
 
     av_log(NULL, AV_LOG_DEBUG, "Muxing frame\n");
+
+    int64_t pts = enc_pkt.pts;
+
     /* mux encoded frame */
     ret = av_interleaved_write_frame(ofmt_ctx, &enc_pkt);
+
+    g_position = pts * av_q2d(ofmt_ctx->streams[stream_index]->time_base) * 1000;
+
     return ret;
 }
 
@@ -502,7 +566,8 @@ static int flush_encoder(unsigned int stream_index)
     return ret;
 }
 
-int main(int argc, char **argv)
+// 开始转码
+static int transcode(char *input_file, char *ouput_file, char **config)
 {
     int ret;
     AVPacket packet = { .data = NULL, .size = 0 };
@@ -513,29 +578,39 @@ int main(int argc, char **argv)
     int got_frame;
     int (*dec_func)(AVCodecContext *, AVFrame *, int *, const AVPacket *);
 
-    if (argc != 3) {
-        av_log(NULL, AV_LOG_ERROR, "Usage: %s <input file> <output file>\n", argv[0]);
-        return 1;
-    }
-
     av_register_all();
     avfilter_register_all();
 
-    if ((ret = open_input_file(argv[1])) < 0)
+    if ((ret = parse_config(config)) < 0)
         goto end;
-    if ((ret = open_output_file(argv[2])) < 0)
+    if ((ret = open_input_file(input_file)) < 0)
+        goto end;
+    if ((ret = open_output_file(ouput_file)) < 0)
         goto end;
     if ((ret = init_filters()) < 0)
         goto end;
 
     /* read all packets */
     while (1) {
+        if (g_was_canceled == 1)
+            goto end;
+
         if ((ret = av_read_frame(ifmt_ctx, &packet)) < 0)
             break;
         stream_index = packet.stream_index;
         type = ifmt_ctx->streams[packet.stream_index]->codecpar->codec_type;
         av_log(NULL, AV_LOG_DEBUG, "Demuxer gave frame of stream_index %u\n",
                 stream_index);
+
+        if (type == AVMEDIA_TYPE_VIDEO && g_video_offset == 0)
+            g_video_offset = packet.pts;
+        else if (type == AVMEDIA_TYPE_AUDIO && g_audio_offset == 0)
+            g_audio_offset = packet.pts;
+
+        if (type == AVMEDIA_TYPE_VIDEO)
+            packet.pts -= g_video_offset;
+        else if (type == AVMEDIA_TYPE_AUDIO)
+            packet.pts -= g_audio_offset;
 
         if (filter_ctx[stream_index].filter_graph) {
             av_log(NULL, AV_LOG_DEBUG, "Going to reencode&filter the frame\n");
@@ -620,4 +695,33 @@ end:
         av_log(NULL, AV_LOG_ERROR, "Error occurred: %s\n", av_err2str(ret));
 
     return ret ? 1 : 0;
+}
+
+// 取消转码
+static void cancel()
+{
+    g_was_canceled = 1;
+}
+
+// 获取输入视频时间
+static int64_t get_duration()
+{
+    return g_duration;
+}
+
+// 获取当前转码时间
+static int64_t get_position()
+{
+    return g_position;
+}
+
+// 命令行测试
+int main(int argc, char **argv)
+{
+    if (argc != 3) {
+        av_log(NULL, AV_LOG_ERROR, "Usage: %s <input file> <output file>\n", argv[0]);
+        return 1;
+    }
+
+    return transcode(argv[1], argv[2], NULL);
 }
