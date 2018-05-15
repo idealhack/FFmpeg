@@ -441,7 +441,7 @@ static int encode_write_frame(AVFrame *filt_frame, unsigned int stream_index, in
     if (!got_frame)
         got_frame = &got_frame_local;
 
-    av_log(NULL, AV_LOG_INFO, "Encoding frame\n");
+    av_log(NULL, AV_LOG_DEBUG, "Encoding frame\n");
     /* encode filtered frame */
     enc_pkt.data = NULL;
     enc_pkt.size = 0;
@@ -477,7 +477,7 @@ static int filter_encode_write_frame(AVFrame *frame, unsigned int stream_index)
     int ret;
     AVFrame *filt_frame;
 
-    av_log(NULL, AV_LOG_INFO, "Pushing decoded frame to filters\n");
+    av_log(NULL, AV_LOG_DEBUG, "Pushing decoded frame to filters\n");
     /* push the decoded frame into the filtergraph */
     ret = av_buffersrc_add_frame_flags(filter_ctx[stream_index].buffersrc_ctx,
             frame, 0);
@@ -493,7 +493,7 @@ static int filter_encode_write_frame(AVFrame *frame, unsigned int stream_index)
             ret = AVERROR(ENOMEM);
             break;
         }
-        av_log(NULL, AV_LOG_INFO, "Pulling filtered frame from filters\n");
+        av_log(NULL, AV_LOG_DEBUG, "Pulling filtered frame from filters\n");
         ret = av_buffersink_get_frame(filter_ctx[stream_index].buffersink_ctx,
                 filt_frame);
         if (ret < 0) {
@@ -526,7 +526,7 @@ static int flush_encoder(unsigned int stream_index)
         return 0;
 
     while (1) {
-        av_log(NULL, AV_LOG_INFO, "Flushing stream #%u encoder\n", stream_index);
+        av_log(NULL, AV_LOG_DEBUG, "Flushing stream #%u encoder\n", stream_index);
         ret = encode_write_frame(NULL, stream_index, &got_frame);
         if (ret < 0)
             break;
