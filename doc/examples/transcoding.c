@@ -75,6 +75,9 @@ static int64_t g_video_offset;
 static int64_t g_audio_offset;
 // 是否已取消
 static int g_was_canceled;
+// 进度回调
+typedef void (*ProgressCallback)(int64_t position, int64_t duration);
+static ProgressCallback g_progress_cb;
 
 // 解析转码配置
 static int parse_config(char **config)
@@ -472,7 +475,11 @@ static int encode_write_frame(AVFrame *filt_frame, unsigned int stream_index, in
     /* mux encoded frame */
     ret = av_interleaved_write_frame(ofmt_ctx, &enc_pkt);
 
-    g_position = pts * av_q2d(ofmt_ctx->streams[stream_index]->time_base) * 1000;
+    if (ifmt_ctx->streams[stream_index]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+        g_position = pts * av_q2d(ofmt_ctx->streams[stream_index]->time_base) * 1000;
+        if (g_progress_cb)
+            g_progress_cb(g_position, g_duration);
+    }
 
     return ret;
 }
@@ -542,7 +549,7 @@ static int flush_encoder(unsigned int stream_index)
 }
 
 // 开始转码
-static int transcode(char *input_file, char *ouput_file, char **config)
+static int transcode(char *input_file, char *ouput_file, char **config, ProgressCallback cb)
 {
     int ret;
     AVPacket packet = { .data = NULL, .size = 0 };
@@ -552,6 +559,8 @@ static int transcode(char *input_file, char *ouput_file, char **config)
     unsigned int i;
     int got_frame;
     int (*dec_func)(AVCodecContext *, AVFrame *, int *, const AVPacket *);
+
+    g_progress_cb = cb;
 
     av_register_all();
     avfilter_register_all();
@@ -678,16 +687,11 @@ static void cancel()
     g_was_canceled = 1;
 }
 
-// 获取输入视频时间
-static int64_t get_duration()
+// 打印当前转码进度
+static void print_progress(int64_t position, int64_t duration)
 {
-    return g_duration;
-}
-
-// 获取当前转码时间
-static int64_t get_position()
-{
-    return g_position;
+    av_log(NULL, AV_LOG_INFO, "Progress: %f (%lld / %lld)\n",
+        position / (double)duration * 1000, position, duration / 1000);
 }
 
 // 命令行测试
@@ -698,5 +702,5 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    return transcode(argv[1], argv[2], NULL);
+    return transcode(argv[1], argv[2], NULL, print_progress);
 }
