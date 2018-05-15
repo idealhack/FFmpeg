@@ -85,7 +85,7 @@ static int parse_config(char **config)
     g_config.audio_encoder = "aac";
     g_config.width = 480;
     g_config.height = 720;
-    g_config.fps = 60;
+    g_config.fps = 30;
     g_config.bit_rate = 0; // auto
     g_config.sample_fmt = "s16"; // pcm 16
     g_config.sample_rate = 44100;
@@ -213,7 +213,7 @@ static int open_output_file(const char *filename)
                 else
                     enc_ctx->pix_fmt = dec_ctx->pix_fmt;
                 /* video time_base can be set to whatever is handy and supported by encoder */
-                enc_ctx->time_base = dec_ctx->time_base;
+                enc_ctx->time_base = (AVRational){1, g_config.fps};
                 enc_ctx->bit_rate = g_config.bit_rate;
                 enc_ctx->gop_size = g_config.gop_size;
             } else {
