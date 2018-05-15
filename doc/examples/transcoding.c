@@ -450,8 +450,8 @@ static int init_filters(void)
             snprintf(filter_spec, sizeof(filter_spec), "fps=%d,scale=w=%d:h=%d",
             g_config.fps, g_config.width, g_config.height);
         else
-            snprintf(filter_spec, sizeof(filter_spec), "aformat=sample_fmts=%s:sample_rates=%d:channel_layouts=%s",
-            g_config.sample_fmt, g_config.sample_rate, g_config.channel_layout);
+            snprintf(filter_spec, sizeof(filter_spec), "aformat=sample_fmts=fltp:sample_rates=%d:channel_layouts=%s,asetnsamples=n=1024:p=0",
+            g_config.sample_rate, g_config.channel_layout);
         ret = init_filter(&filter_ctx[i], stream_ctx[i].dec_ctx,
                 stream_ctx[i].enc_ctx, filter_spec);
         if (ret)
